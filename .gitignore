@@ -1,0 +1,8 @@
+*.txt
+!Anki.txt
+!BBDC.txt
+!BBDC_updated.txt
+build/
+dist/
+.idea/
+.venv/

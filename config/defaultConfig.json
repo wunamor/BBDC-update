@@ -1,0 +1,8 @@
+{
+    "use_default": false,
+    "bbdc_path": "BBDC.txt",
+    "anki_path": "Anki.txt",
+    "output_path": "BBDC_updated.txt",
+    "sb_do_replace": false,
+    "sth_do_replace": false
+}
