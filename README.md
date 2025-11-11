@@ -2,7 +2,7 @@
 这是一个英语批量处理脚本，用来保存原先 Anki 的配置，而不是下述这个项目执行的结果
 
 需要配合这位大佬的脚本使用（负责从不背单词批量导出单词）
-（https://github.com/ImQQiaoO/BubeiDanci_takeout）
+https://github.com/ImQQiaoO/BubeiDanci_takeout
 
 ## 使用步骤
 1. 将上文那个项目的执行结果 BBDC.csv，另存为 BBDC.txt **注意：必须是utf-8的格式 不然 Anki 导入不了** 
