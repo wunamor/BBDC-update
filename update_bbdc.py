@@ -1,60 +1,105 @@
 import os
 import json
 import sys
-# 配置文件路径 (放在脚本同目录)
-# CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), './config/defaultConfig.json')
+import re
+from pathlib import Path
 
-# config keys
-config_keys = ['bbdc_path', 'anki_path', 'output_path',
-            'sb_do_replace', 'sth_do_replace', 'use_default']
-default_config = {
-    "use_default": False,
-    "bbdc_path": "BBDC.txt",
-    "anki_path": "Anki.txt",
-    "output_path": "BBDC_updated.txt",
-    "sb_do_replace": False,
-    "sth_do_replace": False,
+# ================= 配置部分 (模块化结构) =================
+
+DEFAULT_CONFIG = {
+    # 1. 系统/元数据配置
+    "system": {
+        "auto_run": False  # 是否跳过询问直接运行
+    },
+
+    # 2. 文件路径配置
+    "files": {
+        "bbdc_path": "BBDC.txt",
+        "anki_path": "Anki.txt",
+        "output_path": "BBDC_updated.txt"
+    },
+
+    # 3. Anki 文件解析模板
+    "anki_template": {
+        "delimiter": "\t",  # 分隔符
+        "word_index": 0,  # 单词列索引 (0-based)
+        "meaning_index": 1  # 意思列索引 (0-based)
+    },
+
+    # 4. BBDC 文件解析模板
+    "bbdc_template": {
+        "delimiter": ",",
+        "word_index": 1,
+        "meaning_index": 2
+    },
+
+    # 5. 替换规则开关
+    "switches": {
+        "replace_sb": False,  # sb -> somebody
+        "replace_sth": False  # sth -> something
+    }
 }
 
-def get_base_path():
-    """获取应用程序的正确基础路径（适用于打包和非打包环境）"""
+
+def get_app_path():
+    """获取应用程序基础路径"""
     if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        # 打包后的可执行文件路径
-        return os.path.dirname(sys.executable)
+        return Path(sys.executable).parent
     else:
-        # 源代码运行路径
-        return os.path.dirname(os.path.abspath(__file__))
+        return Path(__file__).parent.absolute()
 
-# 获取正确路径
-base_path = get_base_path()
-CONFIG_FILE = os.path.join(base_path, 'config', 'defaultConfig.json')
 
-# 加载文件配置
+BASE_PATH = get_app_path()
+CONFIG_FILE = BASE_PATH / 'config' / 'defaultConfig.json'
+
+
+# ================= 辅助函数 =================
+
+def unescape_string(s):
+    if s == r'\t': return '\t'
+    if s == r'\n': return '\n'
+    return s
+
+
+def escape_string_for_display(s):
+    if s == '\t': return r'\t'
+    if s == '\n': return r'\n'
+    return s
+
+
 def load_config():
-    """加载配置文件，如果不存在则创建默认配置"""
-    if not os.path.exists(CONFIG_FILE):
-        # 首次运行，创建默认配置
-        save_config(default_config)
+    """加载配置，支持结构检查"""
+    if not CONFIG_FILE.parent.exists():
+        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    if not CONFIG_FILE.exists():
+        save_config(DEFAULT_CONFIG)
         print(f"✅ 首次运行，已创建默认配置文件: {CONFIG_FILE}")
-        return default_config
+        return DEFAULT_CONFIG.copy()
 
     try:
         with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
             config = json.load(f)
-        # 确保配置包含所有必要字段
-        for key, value in default_config.items():
-            if key not in config:
-                config[key] = value
+
+        # 简单检查配置结构是否是旧版本 (旧版本没有 'files' 这个key)
+        if 'files' not in config:
+            print("⚠️ 检测到旧版配置文件，已重置为新版模块化结构。")
+            input("请先保存好原先配置，按下回车后将会覆盖原先旧的配置")
+            # 可以在这里做迁移逻辑，但为了简化直接重置
+
+            save_config(DEFAULT_CONFIG)
+            return DEFAULT_CONFIG.copy()
+
         return config
     except Exception as e:
-        print(f"⚠️ 配置文件损坏，使用默认配置: {e}")
-        return default_config
+        print(f"⚠️ 配置文件读取出错，使用默认配置: {e}")
+        return DEFAULT_CONFIG.copy()
 
-# 保存配置文件
+
 def save_config(config):
-    """保存配置到文件"""
+    """保存配置"""
     try:
-        os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=4, ensure_ascii=False)
         return True
@@ -62,146 +107,227 @@ def save_config(config):
         print(f"❌ 无法保存配置: {e}")
         return False
 
-def get_user_input(default_config):
-    # 如果使用默认配置
-    if default_config['use_default']:
-        print(f"✅ 使用默认配置 默认配置路径：{os.path.abspath(CONFIG_FILE)}, "
-              f"\n如果需要关闭自动使用默认配置，那么将 'use_default' 改为 false 即可"
-              f"\ndefaultConfig 的值：")
-        for key in config_keys:
-            print(f'{key}: {default_config[key]}')
-        return default_config
 
-    """获取用户输入的文件路径，并询问是否替换 sth/sb"""
-    print("请输入文件路径（直接回车使用默认文件名）：")
-    bbdc_path = input(f"BBDC 文件路径 [默认: {default_config['bbdc_path']}]: ").strip().strip('"')
-    anki_path = input(f"Anki 文件路径 [默认: {default_config['anki_path']}]: ").strip().strip('"')
-    output_path = input(f"最终结果的文件路径 [默认: {default_config['output_path']}]: ").strip().strip('"')
+def ask_bool(prompt, default_val):
+    default_str = "Y" if default_val else "n"
+    while True:
+        choice = input(f"{prompt} [默认: {default_str}]: ").strip().lower()
+        if choice == '': return default_val
+        if choice in ('y', 'yes'): return True
+        if choice in ('n', 'no'): return False
+        print("❌ 输入错误，请输入 y 或 n")
 
-    if not bbdc_path:
-        bbdc_path = default_config['bbdc_path']
-    if not anki_path:
-        anki_path = default_config['anki_path']
-    if not output_path:
-        output_path = default_config['output_path']
 
-    # 询问是否替换 sth / sb
-    sb_replace_choice = input("是否将 'sb' 替换为 'somebody'？(Y/n)"
-                              f" [默认: {getYesOrNo(default_config['sb_do_replace'])}"
-                              "]: ")
-    sth_replace_choice = input("是否将 'sth' 替换为 'something' ？(Y/n)"
-                               f" [默认: {getYesOrNo(default_config['sth_do_replace'])}"
-                               "]: ")
+def ask_val(desc, current_val, is_index=False):
+    display_val = current_val
+    if is_index:
+        display_val = current_val + 1
+    else:
+        display_val = escape_string_for_display(current_val)
 
-    sb_do_replace = isMatch(sb_replace_choice, default_config['sb_do_replace'])
-    sth_do_replace = isMatch(sth_replace_choice, default_config['sth_do_replace'])
-    # 是否开启默认配置
-    use_default_choice = input("下一次是否默认使用该配置？(Y/n) [默认: n]: ").strip().lower()
-    use_default = isMatch(use_default_choice, default_config['use_default'])
+    val = input(f"{desc} [默认: {display_val}]: ").strip().strip('"')
 
-    # 更新 default_config
-    default_config.update({k: locals()[k] for k in config_keys})
-    return default_config
+    if val == '':
+        return current_val
 
-def replace_sth_sb(text, sb_do_replace, sth_do_replace):
-    # 注意：为了避免误替换（如 "absb" 中的 sb），可考虑用单词边界，但简单场景直接替换即可
-    if sb_do_replace:
-        text = text.replace('sb', 'somebody')
-    if sth_do_replace:
-        text = text.replace('sth', 'something')
+    if is_index:
+        try:
+            return int(val) - 1
+        except ValueError:
+            print(f"⚠️ 输入无效，使用默认值")
+            return current_val
+    else:
+        return unescape_string(val)
+
+
+def get_user_input(config):
+    """获取用户配置，适配嵌套结构"""
+    # 检查是否自动运行
+    if config['system'].get('auto_run', False):
+        print(f"✅ 使用保存的默认配置")
+        return config
+
+    # 深拷贝以防止修改原对象（虽然这里不是必须，但好习惯）
+    import copy
+    new_config = copy.deepcopy(config)
+
+    print("\n=== 1. 文件路径设置 ===")
+    files = new_config['files']
+    files['bbdc_path'] = ask_val('BBDC 文件路径', files['bbdc_path'])
+    files['anki_path'] = ask_val('Anki 文件路径', files['anki_path'])
+    files['output_path'] = ask_val('最终结果路径', files['output_path'])
+
+    print("\n=== 2. Anki 模板设置 (直接回车使用默认) ===")
+    anki_tpl = new_config['anki_template']
+    print(f"当前 Anki 格式: 分隔符='{escape_string_for_display(anki_tpl['delimiter'])}'")
+
+    if ask_bool("是否修改 Anki 文件解析模板？(y/N)", False):
+        anki_tpl['delimiter'] = ask_val("Anki 列分隔符 (支持 \\t, , 等)", anki_tpl['delimiter'])
+        anki_tpl['word_index'] = ask_val("英文单词在第几列", anki_tpl['word_index'], is_index=True)
+        anki_tpl['meaning_index'] = ask_val("中文释义在第几列", anki_tpl['meaning_index'], is_index=True)
+
+    print("\n=== 3. 功能开关 ===")
+    switches = new_config['switches']
+    switches['replace_sb'] = ask_bool("将 'sb' 替换为 'somebody'？", switches['replace_sb'])
+    switches['replace_sth'] = ask_bool("将 'sth' 替换为 'something'？", switches['replace_sth'])
+
+    # 更新系统设置
+    new_config['system']['auto_run'] = ask_bool("以后默认使用此配置不再询问？", False)
+
+    return new_config
+
+
+def replace_sth_sb(text, do_sb, do_sth):
+    if not text: return text
+    if do_sb:
+        text = re.sub(r'\bsb\b', 'somebody', text, flags=re.IGNORECASE)
+    if do_sth:
+        text = re.sub(r'\bsth\b', 'something', text, flags=re.IGNORECASE)
     return text
 
-def parse_anki_file(filepath):
-    """解析 Anki.txt 文件"""
-    anki_dict = {}
-    if not os.path.exists(filepath):
-        raise FileNotFoundError(f"Anki 文件未找到: {filepath}")
-    with open(filepath, 'r', encoding='utf-8') as f:
+
+def parse_file_flexible(filepath, template):
+    """
+    智能解析函数 (适配传入 template 字典)
+    """
+    delimiter = template['delimiter']
+    word_idx = template['word_index']
+    meaning_idx = template['meaning_index']
+
+    data_dict = {}
+    path = Path(filepath)
+    if not path.exists():
+        raise FileNotFoundError(f"文件未找到: {filepath}")
+
+    print(
+        f"正在读取 {path.name} (分隔符: '{escape_string_for_display(delimiter)}', 单词列: {word_idx + 1}, 意思列: {meaning_idx + 1})")
+
+    skipped = 0
+    with open(path, 'r', encoding='utf-8') as f:
         for line in f:
             line = line.strip()
-            if not line:
+            if not line: continue
+
+            parts = line.split(delimiter)
+
+            max_idx = max(word_idx, meaning_idx)
+            if len(parts) <= max_idx:
+                skipped += 1
                 continue
-            parts = line.split('\t')
-            if len(parts) >= 2:
-                english = parts[0].strip()
-                chinese = parts[1].strip()
-                anki_dict[english] = chinese
-    return anki_dict
+
+            english = parts[word_idx].strip()
+
+            # --- 智能拼接逻辑 (多余列拼接到意思后) ---
+            meaning_parts = []
+            meaning_parts.append(parts[meaning_idx].strip())  # 先加主意思
+
+            for i, part in enumerate(parts):
+                if i == word_idx or i == meaning_idx:
+                    continue
+                meaning_parts.append(part.strip())
+
+            final_chinese = delimiter.join(meaning_parts)
+            # --------------------------------------
+
+            data_dict[english] = final_chinese
+
+    if skipped > 0:
+        print(f"⚠️ 注意：有 {skipped} 行因列数不足被跳过。")
+    return data_dict
+
 
 def update_bbdc_file(config, anki_dict):
-    bbdc_path = config['bbdc_path']
-    output_path = config['output_path']
-    sb_do_replace = config['sb_do_replace']
-    sth_do_replace = config['sth_do_replace']
+    # 从嵌套配置中解构变量
+    files = config['files']
+    bbdc_tpl = config['bbdc_template']
+    switches = config['switches']
 
-    """读取 BBDC.txt，先替换 sth/sb（如果启用），再用 Anki 更新释义"""
-    if not os.path.exists(bbdc_path):
+    bbdc_path = Path(files['bbdc_path'])
+    output_path = Path(files['output_path'])
+
+    delimiter = bbdc_tpl['delimiter']
+    word_idx = bbdc_tpl['word_index']
+    meaning_idx = bbdc_tpl['meaning_index']
+
+    if not bbdc_path.exists():
         raise FileNotFoundError(f"BBDC 文件未找到: {bbdc_path}")
+
+    print("正在合并处理...")
+
     with open(bbdc_path, 'r', encoding='utf-8') as f_in, \
-         open(output_path, 'w', encoding='utf-8') as f_out:
+            open(output_path, 'w', encoding='utf-8') as f_out:
+
+        count = 0
+        replaced_count = 0
+
         for line in f_in:
             original_line = line.strip()
             if not original_line:
                 f_out.write('\n')
                 continue
 
-            if ',' not in original_line:
+            parts = original_line.split(delimiter)
+
+            max_idx = max(word_idx, meaning_idx)
+            if len(parts) <= max_idx:
                 f_out.write(original_line + '\n')
                 continue
 
-            idx_part, rest = original_line.split(',', 1)
+            english = parts[word_idx].strip()
+            chinese = parts[meaning_idx].strip()
 
-            if ',' not in rest:
-                f_out.write(original_line + '\n')
-                continue
+            # 1. 处理 sth/sb
+            english_processed = replace_sth_sb(english, switches['replace_sb'], switches['replace_sth'])
 
-            english, chinese = rest.split(',', 1)
-            english = english.strip()
-            chinese = chinese.strip()
+            # 2. 匹配 Anki
+            final_chinese = chinese
+            if english_processed in anki_dict:
+                final_chinese = anki_dict[english_processed]
+                replaced_count += 1
+            elif english in anki_dict:
+                final_chinese = anki_dict[english]
+                replaced_count += 1
 
-            # ✅ 在这里立即进行 sth/sb 替换（仅对 BBDC 原始内容）
-            english = replace_sth_sb(english, sb_do_replace, sth_do_replace)
-            # chinese = replace_sth_sb(chinese, True)
+            # 3. 写入 (保留原行其他信息)
+            parts[word_idx] = english_processed
+            parts[meaning_idx] = final_chinese
 
-            # 如果 Anki 中有这个英文短语，就替换中文释义（使用 Anki 的原始内容，不替换 sth/sb）
-            if english in anki_dict:
-                new_chinese = anki_dict[english]
-                # 注意：Anki 的释义不进行 sth/sb 替换（按你的需求，只替换 BBDC 的原始内容）
-                new_line = f"{idx_part},{english},{new_chinese}"
-            else:
-                new_line = f"{idx_part},{english},{chinese}"
-
+            new_line = delimiter.join(parts)
             f_out.write(new_line + '\n')
+            count += 1
 
-def getYesOrNo(flag):
-    return "Y" if flag else "n"
+    print(f"处理完毕。共处理 {count} 行，更新了 {replaced_count} 个释义。")
 
-# 是否与原来的匹配
-def isMatch(input_str, default_value):
-    str = input_str.strip().lower()
-    if str == '':
-        return default_value
-    if str in ('y', 'yes'): return True
-    if str in ('n', 'no'): return False
-    raise Exception(f"输入异常 期望输入 'y','yes','n','no'(大小写不区分) 实际输入{input_str}")
 
 def main():
+    """主逻辑函数"""
     try:
-        # 获取默认配置
-        default_config = load_config()
-        # 获取用户输入配置
-        config = get_user_input(default_config)
-        # 保存配置
+        config = load_config()
+        config = get_user_input(config)
         save_config(config)
-        anki_dict = parse_anki_file(config['anki_path'])
+
+        # 传入 Anki 模板部分
+        anki_dict = parse_file_flexible(
+            config['files']['anki_path'],
+            config['anki_template']
+        )
 
         update_bbdc_file(config, anki_dict)
-        print(f"\n✅ 处理完成！结果已保存到：{config['output_path']}")
-    except FileNotFoundError as e:
-        print(f"\n❌ 错误：{e}")
+
+        print(f"\n✅ 成功！结果已保存到：{os.path.abspath(config['files']['output_path'])}")
+
     except Exception as e:
-        print(f"\n💥 未知错误：{e}")
+        import traceback
+        traceback.print_exc()
+        print(f"\n💥 错误：{e}")
+
 
 if __name__ == '__main__':
+    print("=" * 15 + " 开始执行 " + "=" * 15)
+
+    # 1. 运行主程序
     main()
-    input("输入回车结束程序")
+
+    # 2. 【修改点】无论成功还是失败，最后都会停在这里等待用户回车
+    print("\n" + "=" * 15 + " 执行结束 " + "=" * 15)
+    input("按回车键退出程序...")

@@ -1,4 +1,2 @@
-argue for something	为…辩护；主张…
-test	测adw
-admin	管理者
-admin somebody	管理者 somebawdody
+测3,231,test
+管理者1213,123,admin
